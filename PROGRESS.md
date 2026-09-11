@@ -24,7 +24,7 @@ evaluated as the candidate because it is the only candidate that exists.
 | Comparisons run | **782** (198 live originals + 584 recovered; 20 overlap) |
 | Distinct real DJI logs | **762**, all log **v14** |
 | Metrics diffed per log | **24**, floats compared **bitwise** (`to_bits`), not by tolerance |
-| `gps_track` coordinates compared | **6,756,743** (full-precision ordered SHA-256 digest per track) |
+| `gps_track` coordinates compared | **6,756,743** across the **763** records with a non-empty track (full-precision ordered SHA-256 digest). 19 records decoded frames but never got a GPS fix, so their track comparison is vacuous; the header quantities they fall back to are compared directly as 4 of the 24 metrics. |
 | Frames decoded | **6,797,600**; `frames_decoded` true for 782/782 |
 | DJI keychains fetched / failed | **759 / 0** (23 cache hits = 3 pilot + the 20 overlaps) |
 | Parse errors | **0** |

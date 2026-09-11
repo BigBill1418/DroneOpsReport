@@ -24,7 +24,11 @@ battery serial numbers". Evaluated anyway, as the only candidate that exists:
 - **782 comparisons over 762 distinct real DJI logs, 24 metrics each,
   6,756,743 `gps_track` coordinates: zero differences.** Bitwise, not
   within-tolerance. 759 DJI keychains fetched, 0 fetch failures, 0 parse errors,
-  every log frame-decoded (all v14).
+  every log frame-decoded (all v14). Caveat stated in the report rather than
+  rounded away: 19 of the 782 records decoded frames but never got a GPS fix, so
+  their track comparison is vacuous — the 6,756,743 coordinates are across the
+  763 records that have a track, and the header quantities those 19 fall back to
+  are compared directly as 4 of the 24 metrics.
 - Its only behavioural change is gated on `ProductType::Inspire1`/`Pro`/`RAW`.
   The fleet operates **no** Inspire 1, so it is unreachable here. Byte
   consumption is unchanged, so no field offset can shift.

@@ -358,9 +358,33 @@ wall-clock 1202 s on 5 cores.
 
 This is the point at which the evaluation could have been worthless: the plan's
 own §6 note and the task brief both warn against reporting results from logs
-that failed to decode. **None failed.** `frames_decoded` is true for 782/782
-and `point_count > 0` for all of them, so every headline metric in this report
-is frame-derived, not a header fallback.
+that failed to decode. **None failed** — `frames_decoded` is true for 782/782
+and `frame_count > 0` for 782/782.
+
+**One caveat, stated precisely rather than rounded away.** Decoding frames is not
+the same as having a GPS track: **19 of the 782 records (18 distinct logs — 5
+live, 14 recovered) have `point_count == 0`.** They decoded 18–1391 frames
+(median 45) but never acquired a usable fix — short aborted takeoffs and indoor
+runs — so every frame's lat/lon fails `dji.rs`'s `abs() > 0.001` guard. For those
+19, three comparisons are **vacuous** rather than informative:
+
+| On the 19 empty-track records | |
+|---|---:|
+| `gps_track_digest` is the empty-track digest in **both** arms | 19 / 19 |
+| `total_distance` falls back to `header_distance` | 19 / 19 |
+| `home_lat` / `home_lon` are `None` | 19 / 19 |
+| `max_altitude` falls back to `header_max_height` | 16 / 19 |
+| `max_altitude` is frame-derived (`> 0`) | 3 / 19 |
+| any differing field | **0 / 19** |
+
+This does not weaken the result, and here is why: the header quantities those 19
+fall back to (`header_distance`, `header_max_height`, `header_max_hspeed`,
+`header_duration_raw`) are themselves **compared directly** on all 782 records as
+four of the 24 metrics, so those logs are not unexamined — only their *track*
+comparison is empty. And the coordinate count quoted above is the real one:
+**6,756,743 coordinates across the 763 records (744 distinct logs) that have a
+track at all.** A reader should take "every `gps_track` coordinate matched" to
+mean exactly that, and not to imply 782 non-trivial track comparisons.
 
 > **Correction to my own earlier reading, and a vindication of plan §8a.** I
 > initially quarantined 8 of the 584 recovered files because their first four
@@ -387,7 +411,7 @@ point_count                              0
 product_type                             0
 frames_decoded                           0
 frame_count                              0
-gps_track_digest                         0      ← 6,756,743 coordinates
+gps_track_digest                         0      ← 6,756,743 coordinates, 763 non-empty tracks
 battery_sn                               0
 drone_model                              0
 aircraft_name                            0
