@@ -7,7 +7,31 @@ reference where applicable.
 
 ## Flight-parser data expansion (research 2026-09-04)
 
-### FP-1 — Extract the untapped DJI log data into a Flight Details view — PLANNED (log inventory done: 182 originals on fleet + all 584 OpenDroneLog originals RECOVERED 2026-09-04 to BOS ~/droneops-staging/drive-logs, hashed, 564 new; 28 dji_txt originals still lost)
+### FP-1 — Extract the untapped DJI log data into a Flight Details view — **P0 + P1 LIVE; P-EVAL next, P2–P7 remain**
+
+**Status 2026-09-05/06.** P0 (schema + read path) and P1 (Tier 0 extraction)
+are merged and **live on BOS-HQ** — app **2.83.0**, parser **1.2.0**, alembic
+head `0011_battery_src_truth`, `flight_details` + `flight_series` present and
+inert (0 rows until the backfill runs). Separately, the fleet-attribution
+matcher shipped at **2.90.0** (ADR-0044) and attributed all 88 previously
+unlinked flights (50 Matrice 4TD, 39 Matrice 4T, 0 remaining). Evidence and
+the per-phase detail are in `PROGRESS.md`.
+
+**Next gate: P-EVAL**, the `dji-log-parser` crate before/after diff. It runs
+**before P2** by design — if a newer crate fixes `SmartBatteryStatic` and
+`ProductType`, part of P2's shim and P4(b) shrink or vanish. P2 is also
+spike-gated on a measured peak-RSS number against the parser's 256 MB limit,
+which has **not** been measured on a real full-length log yet. Both need
+operator eyes before P2 starts.
+
+**Log inventory (closed).** 182 originals on the fleet; all 584
+OpenDroneLog-era originals recovered to BOS `~/droneops-staging/drive-logs`
+and now covered by restic/R2 under tag `staging`. **28 `dji_txt` originals
+remain lost and are unrecoverable from any fleet source** — HSH's backup
+script only ever ran `pg_dump`, so those bytes were never captured. The one
+surviving lead is time-critical and is an operator action: see
+`docs/reports/2026-09-05-fp1-log-recovery-hunt.md` and the manifest at
+`docs/plans/data/2026-09-05-missing-28-dji-originals.tsv`.
 
 - **Census (input, done).** What the DJI logs carry beyond today's extraction,
   run on 7 real prod logs:
@@ -17,7 +41,7 @@ reference where applicable.
   gimbal pointing, MSL altitude, battery current/mAh/cell balance, app warning
   strings. One call deeper: pilot GPS track (VLOS distance) and pack cycle
   count (needs a decode shim).
-- **Implementation plan (written 2026-09-04, nothing built).**
+- **Implementation plan (written 2026-09-04; P0+P1 built and live, P2-P7 not).**
   `docs/plans/2026-09-04-flight-details-data-ingestion.md` — data model,
   parser contract, backfill + repair + re-import design, API, frontend scope,
   nine phases with sizing and per-phase tests, nine risks, and the PENDING log
