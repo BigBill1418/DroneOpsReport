@@ -4,6 +4,98 @@ Maintained alongside `CHANGELOG.md` and `docs/adr/`. `CHANGELOG.md` is
 the ledger of shipped changes; this file tracks what's in-flight or
 blocked.
 
+## 2026-09-11 — FP-1 **P-EVAL complete**: no crate bump exists; P2 is unblocked on `0.5.7`
+
+**State: EVIDENCE DELIVERED, awaiting Bill's call on §8's follow-ups.** Nothing
+was adopted and nothing was deployed. Report:
+`docs/reports/2026-09-11-dji-log-parser-upgrade-eval.md`. Harness: `tools/p-eval/`.
+
+ADR-0043's **D6** asked for a before/after diff before the crate moves. The
+finding is that **the newest published `dji-log-parser` is `0.5.7` — already the
+pinned version.** Two independent sources agree (crates.io API; `cargo search`
+inside `rust:1.85-bookworm`). Upstream last released 2025-04-26 and is one commit
+ahead of that tag, dated 2025-06-07.
+
+That one commit ("Parse Inspire 1 battery serial numbers", `88fcfc96`) was
+evaluated as the candidate because it is the only candidate that exists.
+
+| Measurement | Result |
+|---|---|
+| Comparisons run | **782** (198 live originals + 584 recovered; 20 overlap) |
+| Distinct real DJI logs | **762**, all log **v14** |
+| Metrics diffed per log | **24**, floats compared **bitwise** (`to_bits`), not by tolerance |
+| `gps_track` coordinates compared | **6,756,743** (full-precision ordered SHA-256 digest per track) |
+| Frames decoded | **6,797,600**; `frames_decoded` true for 782/782 |
+| DJI keychains fetched / failed | **759 / 0** (23 cache hits = 3 pilot + the 20 overlaps) |
+| Parse errors | **0** |
+| **Logs with ANY difference** | **0** |
+| Runtime | 1202 s on 5 cores, off-prod (logs copied to the workspace; BOS untouched) |
+
+**The zero is falsified, not assumed.** `p-eval --selftest` drives the candidate's
+only changed function to a known-different answer (`Inspire1`: `"0987654321"` →
+`"1234567890"`), proves the change is reachable *only* via the three Inspire-1
+product types, and proves the comparator reports a one-ULP float difference.
+`selftest failures: 0`. A corpus with no Inspire 1 is therefore *predicted* to
+show zero differences.
+
+**Second control — the harness against production's own rows**, partitioned by
+when each row was written:
+
+| Row era | duration_secs | total_distance |
+|---|---:|---:|
+| Written by today's parser (73 rows) | **73 / 73** | **73 / 73** |
+| Legacy, pre-ADR-0027/0028 (125 rows) | 62 / 125 | 123 / 125 |
+
+`max_altitude`, `max_speed`, `point_count`, `frame_count`, `product_type`:
+**198 / 198** each. Every disagreement is a legacy row with a named cause —
+ADR-0027 (duration source) for 63, ADR-0028's C1 outlier gate for 2 (the harness
+drops one teleport segment those rows predate), ADR-0044's matcher rewriting
+`drone_model` to the canonical fleet name for 129.
+
+**Quoted test output (no CI job runs these):**
+
+```
+tools/p-eval  cargo test → test result: ok. 13 passed; 0 failed; 0 ignored
+tools/p-eval  --selftest → selftest failures: 0
+flight-parser cargo test → test result: ok. 65 passed; 0 failed; 0 ignored
+```
+
+### What P2 inherits
+
+- **Build the §2.4 `SmartBatteryStatic` shim** — upstream has not fixed it
+  (`record/smart_battery_group.rs` is identical between pin and candidate). The
+  plan's `raw >> 8` is the right transform; the new constraint is that it
+  recovers the true value only while the top byte is zero, so **`loop_times`
+  silently wraps at 256 cycles** and the `0..=3000` plausibility gate cannot
+  catch it. Confirm in P2-a against a pack with a three-digit cycle count.
+- **Keep the `Unknown(NNN) → aircraft_name` fallback in full.** Four placeholders
+  live, not three: `Unknown(150)` (Matrice 4T) exists on 39 recovered logs and no
+  native row yet, so P7's dry-run should expect four values from P4(b)'s
+  `^Unknown\(\d+\)$` predicate.
+- **Peak RSS is still unmeasured** against the parser's 256 MB `mem_limit`. The
+  harness is not a proxy — it holds two frame vectors and two track copies, so its
+  footprint is structurally larger. Still P2-a's gate.
+
+### Open for Bill
+
+1. **Pin the crate exactly** (`= "0.5.7"`). `Cargo.toml` currently requests
+   `"0.5"`, so a `cargo update` could move it and bypass D6 without a decision.
+   Not done here — it is a change to the manifest D6 governs.
+2. **Guard `DJI_LOG_PARSER_VERSION`** against `Cargo.lock`. It is stamped on every
+   `flight_details` row as the provenance D6's "re-backfill below version X" query
+   depends on, and nothing keeps it honest.
+3. **153 of 226 `dji_txt` rows are legacy** and carry pre-ADR-0027/0028 duration
+   and distance. D5 freezes those fields, so they stay stale unless something
+   reprocesses. The error is small — 6 rows off by more than 1 s, +35.7 s total
+   across the 125 measured — and leaving it is defensible. It should be a
+   decision, not an oversight.
+4. **Operational note:** the DJI decode key is **not** in the parser's
+   environment anywhere (prod and demo both have `DJI_API_KEY=""`, so
+   `GET /health` → `dji_key_configured: false` is correct by design, not a
+   defect). Production reads it from `system_settings.dji_api_key` and passes it
+   per-request as `X-DJI-Api-Key`. Worth knowing before anyone "fixes" that
+   health field.
+
 ## 2026-09-05 — Fleet-attribution matcher: canonical DJI serials (ADR-0044) — **LIVE IN PRODUCTION**
 
 **State: MERGED AND LIVE.** Operator gave the go on 2026-09-05.

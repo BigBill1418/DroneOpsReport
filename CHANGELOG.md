@@ -4,6 +4,75 @@
 
 Notable changes to DroneOpsCommand. Dates are absolute (YYYY-MM-DD, UTC).
 
+## 2026-09-11 — P-EVAL: the `dji-log-parser` bump does not exist
+
+FP-1's **P-EVAL** gate (ADR-0043 decision **D6**) is complete. Report:
+`docs/reports/2026-09-11-dji-log-parser-upgrade-eval.md`. Harness:
+`tools/p-eval/` — standalone, no DB writes, no schema change, not deployed, and
+**`flight-parser/Cargo.toml` was not touched**.
+
+**Verdict: do not adopt — there is nothing to adopt.** The newest published
+`dji-log-parser` is **`0.5.7`**, which is exactly what `flight-parser/Cargo.lock`
+already pins (confirmed by the crates.io API *and* `cargo search` under the
+`rust:1.85-bookworm` toolchain the parser's Dockerfile pins). Upstream's last
+release was 2025-04-26 and its repository has had one commit since — 15 months
+dormant.
+
+The only newer artefact is upstream `master` at `88fcfc96`, "Parse Inspire 1
+battery serial numbers". Evaluated anyway, as the only candidate that exists:
+
+- **782 comparisons over 762 distinct real DJI logs, 24 metrics each,
+  6,756,743 `gps_track` coordinates: zero differences.** Bitwise, not
+  within-tolerance. 759 DJI keychains fetched, 0 fetch failures, 0 parse errors,
+  every log frame-decoded (all v14).
+- Its only behavioural change is gated on `ProductType::Inspire1`/`Pro`/`RAW`.
+  The fleet operates **no** Inspire 1, so it is unreachable here. Byte
+  consumption is unchanged, so no field offset can shift.
+- Adopting would swap a checksummed crates.io dependency for a git dependency on
+  an unreleased commit, for no measurable gain.
+
+**What this settles for the phases behind the gate:**
+
+- **`Unknown(NNN)` does not resolve.** The `ProductType` enum is unchanged. All
+  four placeholders persist — `Unknown(178)` Matrice 4TD, `Unknown(137)` Mavic
+  4 Pro, `Unknown(139)` Mini 5 Pro, `Unknown(150)` Matrice 4T (the last appears
+  only on recovered ODL-era logs and goes live at P7). 166 of 226 `dji_txt`
+  flights — 73% — are on an airframe the crate cannot name. `dji.rs`'s
+  `aircraft_name` fallback is permanent infrastructure, not a stopgap.
+- **`SmartBatteryStatic` is not fixed upstream**, so **P2 must build the §2.4
+  shim**. The plan's diagnosis is right and now sharper: every field after
+  `index` is read exactly one byte early (consistent with C struct padding), so
+  `raw >> 8` is correct and `swap_bytes()` is not. New limit: `>> 8` recovers the
+  true value only while its top byte is zero — fine forever for
+  `designed_capacity` and `full_voltage`, but **`loop_times` breaks at 256
+  cycles**, and the plan's `0..=3000` plausibility gate cannot catch it (a
+  260-cycle pack reads as 4).
+- **P2 is unblocked and should proceed on `0.5.7`.**
+
+**Corpus re-counted rather than inherited** (the plan's own §8 says to):
+`/data/uploads/flight_logs` holds **200** files = **198** real DJI logs + the 2
+dummies; 198 is exactly the hash-set intersection with `flights.source_file_hash`.
+`dji_txt` rows are **226** (plan says 210; §8's correction says 218). 28 rows
+still have no retained original. Plus the 584 recovered ODL-era originals, of
+which 20 overlap the live set. The plan's 182/184/190/192 figures are all stale.
+
+**Four follow-ups recorded in the report, deliberately not actioned here:**
+`flight-parser/Cargo.toml` requests `"0.5"` not `"=0.5.7"` so the lockfile is the
+only thing enforcing D6; `DJI_LOG_PARSER_VERSION` is a hand-maintained string
+with nothing tying it to `Cargo.lock` despite being the provenance stamped on
+every `flight_details` row; upstream dormancy makes `Unknown(NNN)` permanent;
+and a fresh dependency resolve **no longer builds on `rust:1.85`** (the
+`idna`→`icu` chain now wants 1.88), so the committed `Cargo.lock` is load-bearing
+— never `cargo update` the parser without bumping its Dockerfile toolchain.
+
+**Test output quoted, because nothing in CI runs these:**
+
+```
+tools/p-eval  cargo test   → test result: ok. 13 passed; 0 failed
+tools/p-eval  --selftest   → selftest failures: 0
+flight-parser cargo test   → test result: ok. 65 passed; 0 failed
+```
+
 ## 2026-09-11 — docs sweep: CLAUDE.md and README told you to run a script that does not exist
 
 A full pass over the repo's docs and metadata. Everything below was verified

@@ -466,7 +466,7 @@ the transform is uniformly **`raw >> 8`**, not a byte swap:
 | `loop_times` (M4TD) | 5888 | `0x1700` | 23 | 23 |
 | `loop_times` (M30) | 2304 | `0x0900` | 9 | 9 |
 | `designed_capacity` (M4TD) | 1899520 | `0x1CFC00` | 7420 | 7420 mAh |
-| `designed_capacity` (M30/TB30) | 1505282 | `0x16F002` | 5880 | 5880 mAh |
+| `designed_capacity` (M30/TB30) | 1505282 | `0x16F802` | 5880 | 5880 mAh |
 
 For a `u16` the two are indistinguishable. For the 32-bit `designed_capacity`
 they are not, and the M30 low byte is `0x02` — **nonzero**, which a clean endian
@@ -482,7 +482,18 @@ cycles `0..=3000`, designed capacity `1000..=30000` mAh, full-charge voltage
 `pack_values_shimmed` records that the correction was applied, so shimmed rows
 stay distinguishable if upstream fixes it.
 
-**P-EVAL (§6, D6) checks whether the shim is needed at all** before P2 builds it.
+**P-EVAL (§6, D6) checked whether the shim is needed at all. It is.** Upstream
+has not fixed this — `record/smart_battery_group.rs` is byte-for-byte identical
+between `0.5.7` and upstream `master`. Two corrections from the 2026-09-11 report:
+the hex for 1505282 is `0x16F802` (fixed in the table above — `0x16F002` is a
+different number), and **`raw >> 8` recovers the true value only while its
+most-significant byte is zero.** That is always true for `designed_capacity` and
+`full_charge_voltage`, but **`loop_times` is a `u16`, so the shim wraps at 256
+cycles** — a pack at a true 260 cycles reads as 4, which passes the `0..=3000`
+plausibility gate and is stored as a plausible value. P2-a must either read the
+field at the corrected offset or treat a *decreasing* observed cycle count as
+non-authoritative (which is what §1.6's `GREATEST` monotonic guard already does —
+worth keeping for that reason, not by coincidence).
 
 ### 2.5 Full resolution, and the rounding that pays for it (D2)
 
@@ -888,7 +899,21 @@ ADR-0032 unit assertions.
 `flight_series` rows; one without writes none; malformed `details` is swallowed
 and the flight still imports.
 
-**P-EVAL — library evaluation (D6).** A standalone harness, **no DB writes**.
+**P-EVAL — library evaluation (D6). EXECUTED 2026-09-11 —
+[`docs/reports/2026-09-11-dji-log-parser-upgrade-eval.md`](../reports/2026-09-11-dji-log-parser-upgrade-eval.md).**
+Outcome: **no crate bump exists.** The newest published `dji-log-parser` is
+`0.5.7`, already the pinned version; upstream is one unreleased commit ahead
+(Inspire-1 battery serials) and dormant since 2025-06-07. That commit was
+evaluated anyway — 782 comparisons over 762 distinct logs, 24 metrics,
+6,756,743 `gps_track` coordinates, **zero differences** — and not adopted.
+Neither hoped-for fix landed upstream, so **step 8 below does not apply**,
+`Unknown(NNN)` does not resolve, and **P2 must build the §2.4 shim in full**.
+Three figures in the block below are stale: the corpus is **198** real originals
+(not 182), `dji_txt` is **226** rows (not 210), and `flight-parser/Cargo.toml`
+requests `"0.5"` rather than pinning `0.5.7` — the lockfile is the only thing
+enforcing D6. The original specification follows unchanged.
+
+A standalone harness, **no DB writes**.
 1. Resolve the newest published `dji-log-parser` (`cargo search` / crates.io) —
    do not assume a version number.
 2. Build the parser twice: pinned `0.5.7` and the candidate.

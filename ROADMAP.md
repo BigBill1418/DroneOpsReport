@@ -7,7 +7,7 @@ reference where applicable.
 
 ## Flight-parser data expansion (research 2026-09-04)
 
-### FP-1 — Extract the untapped DJI log data into a Flight Details view — **P0 + P1 LIVE; P-EVAL next, P2–P7 remain**
+### FP-1 — Extract the untapped DJI log data into a Flight Details view — **P0 + P1 LIVE; P-EVAL DONE (no crate bump exists); P2–P7 remain**
 
 **Status 2026-09-05/06.** P0 (schema + read path) and P1 (Tier 0 extraction)
 are merged and **live on BOS-HQ** — app **2.83.0**, parser **1.2.0**, alembic
@@ -17,14 +17,34 @@ matcher shipped at **2.90.0** (ADR-0044) and attributed all 88 previously
 unlinked flights (50 Matrice 4TD, 39 Matrice 4T, 0 remaining). Evidence and
 the per-phase detail are in `PROGRESS.md`.
 
-**Next gate: P-EVAL**, the `dji-log-parser` crate before/after diff. It runs
-**before P2** by design — if a newer crate fixes `SmartBatteryStatic` and
-`ProductType`, part of P2's shim and P4(b) shrink or vanish. P2 is also
-spike-gated on a measured peak-RSS number against the parser's 256 MB limit,
-which has **not** been measured on a real full-length log yet. Both need
-operator eyes before P2 starts.
+**P-EVAL — CLOSED 2026-09-11.** Report:
+`docs/reports/2026-09-11-dji-log-parser-upgrade-eval.md`. **The crate bump does
+not exist**: the newest published `dji-log-parser` is `0.5.7`, already the pinned
+version, and upstream has been dormant since 2025-06-07. The one unreleased
+commit (Inspire-1 battery serials) was evaluated anyway — **782 comparisons over
+762 distinct logs, 24 metrics, 6,756,743 `gps_track` coordinates, zero
+differences**, with falsification controls proving the harness detects a real
+difference when one is reachable. Nothing was adopted; `Cargo.toml` was not
+touched.
 
-**Log inventory (closed).** 182 originals on the fleet; all 584
+*Consequence for P2:* neither hoped-for upstream fix exists. `Unknown(NNN)` does
+not resolve (four placeholders live, including `Unknown(150)` Matrice 4T which
+goes live at P7), so P1's fallback and P4(b)'s repair stay in full; and
+`SmartBatteryStatic` is unfixed, so **P2 must build the §2.4 shim** — with the
+newly derived constraint that `raw >> 8` wraps `loop_times` at 256 cycles and
+the `0..=3000` plausibility gate cannot catch it.
+
+**P2's remaining gate is the peak-RSS spike** against the parser's 256 MB
+`mem_limit`, still **unmeasured** on a real full-length log. The harness is
+explicitly not a proxy for it. That number, plus Bill's call on the four
+follow-ups in the report's §8, is what stands between here and P2.
+
+**Log inventory (closed; counts re-derived 2026-09-11).** **198** real
+originals on the fleet — `/data/uploads/flight_logs` holds 200 files, of which 2
+are the dummy test files, and 198 is the hash-set intersection with
+`flights.source_file_hash`. `dji_txt` rows now number **226**. Every "182" / "184"
+/ "190" / "192" figure elsewhere in this repo's FP-1 docs is stale; re-derive from
+the database. All 584
 OpenDroneLog-era originals recovered to BOS `~/droneops-staging/drive-logs`
 and now covered by restic/R2 under tag `staging`. **28 `dji_txt` originals
 remain lost and are unrecoverable from any fleet source** — HSH's backup

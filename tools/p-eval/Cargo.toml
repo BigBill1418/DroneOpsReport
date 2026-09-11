@@ -1,0 +1,29 @@
+# P-EVAL harness (ADR-0043 decision D6). Standalone: NOT part of the
+# flight-parser build, never deployed, performs no database writes.
+#
+# It links TWO copies of `dji-log-parser` in one binary — the version
+# `flight-parser/Cargo.lock` pins today, and the evaluation candidate — so a
+# single pass over a log file produces both readings from identical input
+# bytes and an identical keychain. Cargo permits this because a registry
+# source and a git source are distinct package ids.
+[package]
+name = "p-eval"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# BEFORE: exactly what flight-parser/Cargo.lock resolves to today.
+djilog_pinned = { package = "dji-log-parser", version = "=0.5.7" }
+# AFTER: the evaluation candidate, pinned by commit sha (not a branch) so this
+# harness is reproducible after upstream moves.
+djilog_cand = { package = "dji-log-parser", git = "https://github.com/lvauvillier/dji-log-parser", rev = "88fcfc96d2fcd29c6c69e9643196a37c4feb3888" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+
+[[bin]]
+name = "p-eval"
+path = "src/main.rs"
