@@ -18,30 +18,57 @@ If the answer to ANY of these is yes — either find an alternative approach tha
 
 Every commit that changes application code MUST include a version bump. Use semantic versioning (MAJOR.MINOR.PATCH). Bump PATCH for fixes/tweaks, MINOR for new features, MAJOR for breaking changes.
 
-Update the version in ALL 4 of these files:
+Update the version in ALL of these — **5 files, 6 locations**:
 
 1. `README.md` — line near top: `**Version X.Y.Z**`
 2. `frontend/package.json` — `"version": "X.Y.Z"`
 3. `backend/app/main.py` — `version="X.Y.Z"` in the FastAPI() call
-4. `frontend/src/components/Layout/AppShell.tsx` — `vX.Y.Z` displayed in the navbar footer
+4. `frontend/src/components/Layout/AppShell.tsx` — `vX.Y.Z` appears **TWICE**:
+   the desktop sidebar (~line 121) **and** the mobile drawer (~line 394). This
+   file said "the navbar footer", singular, for a long time and the mobile one
+   was repeatedly missed.
+5. `flight-parser/Cargo.toml` — bump **only when the Rust parser changes.**
+   `flight-parser/src/main.rs` reports `env!("CARGO_PKG_VERSION")` on
+   `GET /health`, and that endpoint is the **only** reliable confirmation that a
+   parser deploy actually landed — so an un-bumped parser is an unverifiable one.
+
+Verify each line number against the current file before editing; they drift.
 
 Include the version tag in the commit message (e.g. `— v1.7.8`).
 
 ## Tech Stack
 
 - **Backend**: Python / FastAPI, SQLAlchemy, PostgreSQL
+- **Flight log parsing**: separate Rust service (`flight-parser/`), HTTP on
+  port 8100, `GET /health` reports its own crate version
+- **Extended log data**: `flight_details` (1:1 sidecar) + `flight_series`
+  (full-resolution time series), live since 2.82.0 — ADR-0043. **The
+  `/flight-library` list query must never reference either table**; both are
+  `lazy="noload"` and there are tests that fail if the compiled list SQL touches
+  them (the ADR-0019 heavy-column rule)
 - **Frontend**: React / TypeScript, Mantine UI, Vite
 - **Infrastructure**: Docker Compose (self-hosted)
-- **Deploy**: `update.sh` pulls latest, rebuilds changed services
+- **Deploy**: NOC Master Control fleet deployer, on push to `main` (ADR-0018). There is no in-repo deploy script — `update.sh` was deleted in `e4610b5`.
 
 ## Branch Workflow (REQUIRED)
 
 All commits go directly to **`main`**. There is no `claude/dev` branch anymore — commit, push, deploy. No promotion step, no dev/prod split.
 
-**Server update commands:**
-- `./update.sh` — pull `main`, rebuild changed services, restart
-- `./update.sh --clean` — full rebuild, no Docker cache
-- `./update.sh status` — show branch info & running services
+**There are no `./update.sh` commands — that script does not exist.** It was
+deleted in `e4610b5`; the lines that documented it here were stale until
+2026-09-11. A push to `main` **is** the deploy (ADR-0018): the fleet deployer
+polls `origin/main`, rebuilds the changed services on BOS-HQ and recreates them.
+
+- **Treat any push to `main` as a production deploy.** Branch and let the
+  operator merge unless told otherwise.
+- **Verify a deploy by what is running, never by the deployer's success line:**
+  `curl -s https://droneops.barnardhq.com/openapi.json | jq -r .info.version`
+  for the app, and the parser's `GET /health` → `version` for the Rust service.
+- A commit whose subject carries `[skip-deploy]` is pull-only. The gate is
+  **all** commits in the pushed range, so a docs commit on top of code commits
+  does *not* suppress the deploy.
+- `flight-parser` was missing from the deployer's `build_map` until 2026-09-06,
+  so parser changes reached production only incidentally. It is mapped now.
 
 ## Decision-Making (REQUIRED)
 
@@ -83,6 +110,37 @@ When asked to repair or fix something, you MUST be thorough. Do not apply a surf
 
 **Lesson learned:** The v2.38.6 auth rebuild replaced passlib with direct bcrypt (correct fix) but missed that `reset_admin_password` defaulted to `True` in config.py, causing every container restart to overwrite the admin password. The fix only lasted until the next deploy.
 
+## Tests & CI (read this before claiming anything is green)
+
+**There is no pytest job and no cargo job in CI.** `.github/workflows/` holds
+only `auto-merge-claude.yml`, `secret-scan.yml` and `self-hosted-smoke-test.yml`.
+Nothing runs the test suites at merge time. Every "tests pass" claim in this
+repo's history is a **local, hand-quoted** number with nothing enforcing it — so
+run them yourself and **quote the real output** in the commit body or
+`PROGRESS.md`. An exit code is not evidence.
+
+```bash
+cd backend && pytest -q            # expect "<N> passed, 17 skipped"
+cd flight-parser && cargo test     # expect "test result: ok."
+```
+
+Three environment facts that will otherwise waste your time:
+
+- **`aiosqlite` is required.** Seven test modules build engines on
+  `sqlite+aiosqlite://`. It is pinned in `backend/requirements-dev.txt` — it was
+  missing entirely until 2026-09-11, and without it those modules fail at
+  *setup*, so pytest reports **ERROR, not FAIL**, and the summary still looks
+  plausible: `724 passed, 29 errors` instead of `753 passed`. If you see a pass
+  count ~29 short, check this first.
+- **Blank the OTLP endpoint.** `app/observability/otel.py` falls back to
+  `http://alloy.barnardhq.com:4317` whenever `OTEL_EXPORTER_OTLP_ENDPOINT` is
+  *unset* (the skip gate only fires when it is set-but-empty). Run tests with
+  `OTEL_EXPORTER_OTLP_ENDPOINT=""` or a local suite ships real spans into fleet
+  observability and buries the pytest summary in exporter errors.
+- **WeasyPrint needs native libs.** In a clean container, install the
+  `apt-get` list from `backend/Dockerfile` (pango, cairo, gdk-pixbuf, geos,
+  proj, …) or seven report modules fail collection on `libgobject`.
+
 ## Conventions
 
 - Commit messages: short summary, optional detail paragraph, always end with session link
@@ -118,7 +176,13 @@ header. **Host port map:** base `db` 5434 (neutralized on BOS) ·
 override is ever absent, base `db` tries to bind 5434 and collides with the
 running primary → stack bring-up fails. That's the foot-gun this guards.
 
-Deployer: managed by NOC Master Control (`~/noc-master`) — all per-repo autopull scripts are disabled (`.deployer-disabled` marker in repo root).
+Deployer: managed by NOC Master Control (`~/noc-master`).
+
+**`.deployer-disabled` in the repo root does NOT mean "no auto-deploy."** Nothing
+in the fleet deployer reads that marker; it disabled the *retired per-repo
+autopull*, which no longer exists. This repo **is** continuously deployed on push
+to `main`. The real way to pause deploys is
+`noc-master/data/soak-pause/<repo>.pause`.
 
 **Public hostnames:** prod is **`https://droneops.barnardhq.com`**. Despite
 older docs, `command.barnardhq.com` has **no DNS record** — it resolves only

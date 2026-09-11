@@ -92,28 +92,45 @@ docker compose logs -f ollama-setup
 4. Ollama downloads the Qwen 2.5 3B model (~1.5GB)
 5. All storage directories are created
 
-### Auto-start & auto-deploy (one command)
+### Auto-start on boot
 
-Run the setup script to install boot auto-start and git-based auto-deploy:
+Run the setup script to install the boot-time systemd unit:
 
 ```bash
-sudo ./setup-server.sh                    # tracks main by default
-sudo ./setup-server.sh --branch <name>    # track a different branch
-sudo ./setup-server.sh --uninstall        # remove everything
+sudo ./setup-server.sh             # install droneops.service
+sudo ./setup-server.sh --uninstall # remove it (also cleans up legacy autopull units)
 ```
 
-This installs three systemd units:
-- **`droneops.service`** — starts the Docker stack on boot
-- **`droneops-autopull.service`** — checks git for new commits and deploys
-- **`droneops-autopull.timer`** — triggers the check every 60 seconds
+This installs **one** systemd unit:
+- **`droneops.service`** — starts the Docker Compose stack on boot
 
 ```bash
 # Useful commands
-systemctl status droneops                 # stack status
-systemctl list-timers droneops-autopull*  # next auto-deploy check
-journalctl -u droneops-autopull -f        # auto-deploy logs
-tail -f autopull.log                      # detailed deploy log
+systemctl status droneops          # stack status
+journalctl -u droneops -f          # stack start/stop logs
+docker compose logs -f backend     # application logs
 ```
+
+### Updating
+
+There is **no in-repo deploy script** — `update.sh` and the per-repo
+`autopull` poller were both removed (see
+[ADR-0018](docs/adr/0018-deploy-path-is-noc-fleet-deployer.md)); having two
+deploy paths where one was broken actively misled operators. To update a
+self-hosted install:
+
+```bash
+git pull --ff-only
+docker compose up -d --build       # rebuild only what changed
+docker compose ps                  # confirm everything is healthy
+```
+
+Database migrations run automatically on backend startup, so no separate
+migrate step is needed.
+
+> On BarnardHQ's own production host, deploys are handled by an external
+> fleet deployer that polls `origin/main` — not by anything in this repo.
+> Self-hosters use the two commands above.
 
 All containers have healthchecks and `restart: unless-stopped`, so individual services auto-recover from crashes. The backend retries DB and Redis connections on startup to handle restart race conditions.
 
@@ -516,29 +533,30 @@ The `docker-compose.yml` pins Ollama to 6 CPU cores (leaving 2 for the OS and da
 
 ## Updating
 
-### Auto-Deploy (recommended)
+### Updating the application
 
-The `autopull.sh` script runs via systemd timer (every 60 seconds), polling the tracked git branch for new commits. When changes are detected, it:
+```bash
+git pull --ff-only
+docker compose up -d --build
+docker compose ps                  # confirm healthy
+```
 
-1. Pulls the latest code
-2. Detects which services changed (frontend, backend, or both)
-3. Rebuilds only the changed Docker images
-4. Restarts services with `docker compose up -d`
-5. Verifies the deploy via health checks
-6. Tracks deployed commits to avoid unnecessary rebuilds
+Compose rebuilds only the services whose build context changed, and database
+migrations run automatically on backend startup — there is no separate migrate
+step.
 
-Install auto-deploy with `setup-server.sh` (see [Quick Start](#auto-start--auto-deploy-one-command)).
+There is deliberately **no in-repo auto-deploy poller.** An earlier
+`autopull.sh` + `droneops-autopull.timer` + `update.sh` arrangement was removed
+([ADR-0018](docs/adr/0018-deploy-path-is-noc-fleet-deployer.md)): `autopull.sh`
+still invoked the already-deleted `update.sh`, so the repo advertised two deploy
+paths while one of them was a corpse. That cost real debugging time. If you want
+polling-based CD on a self-hosted install, drive it from outside the repo (a
+systemd timer of your own, a CI runner, or a webhook) rather than reintroducing
+a second in-repo path.
 
 ### Watchtower (base image updates)
 
 Watchtower runs as a sidecar service checking for updated base images (PostgreSQL, Redis, Ollama) daily. By default it auto-updates; set `WATCHTOWER_MONITOR_ONLY=true` to get notifications without auto-updating. Configure `WATCHTOWER_NOTIFICATION_URL` in `.env` for alerts (supports Slack, Discord, email, etc. via [Shoutrrr](https://containrrr.dev/shoutrrr/)).
-
-### Manual update
-
-```bash
-git pull
-docker compose up -d --build
-```
 
 ---
 

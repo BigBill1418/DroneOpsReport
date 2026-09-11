@@ -4,6 +4,52 @@
 
 Notable changes to DroneOpsCommand. Dates are absolute (YYYY-MM-DD, UTC).
 
+## 2026-09-11 — docs sweep: CLAUDE.md and README told you to run a script that does not exist
+
+A full pass over the repo's docs and metadata. Everything below was verified
+against the working tree, not inherited.
+
+**`CLAUDE.md` — four things were actively wrong**, and it is the file every
+Claude Code session loads first:
+
+- **Tech Stack said "Deploy: `update.sh` pulls latest, rebuilds changed
+  services"**, and a *Server update commands* block listed `./update.sh`,
+  `--clean` and `status`. `update.sh` was deleted in `e4610b5` — ADR-0018 records
+  that removal, while this file kept advertising it. Replaced with the real path
+  (fleet deployer on push to `main`), how to verify a deploy by what is running,
+  and the `[skip-deploy]` semantics.
+- **The version-bump list said "ALL 4 of these files"** and described
+  `AppShell.tsx` as "the navbar footer", singular. It appears **twice** — desktop
+  sidebar and mobile drawer — and the mobile one was repeatedly missed.
+  `flight-parser/Cargo.toml` was absent entirely despite being the only thing
+  that makes a parser deploy verifiable. Now 5 files, 6 locations.
+- **`.deployer-disabled` was described in a way that reads as "auto-deploy is
+  off."** Nothing in the fleet deployer reads that marker; this repo **is**
+  continuously deployed on push to `main`. The real pause is
+  `noc-master/data/soak-pause/<repo>.pause`.
+- **Nothing warned that there is no test job in CI.** New *Tests & CI* section:
+  no pytest or cargo job exists, so every "green" claim is local and
+  hand-quoted; plus the three environment traps — `aiosqlite` (absent until
+  2026-09-11, and its absence shows up as 29 ERRORs with a plausible-looking
+  pass count), the OTLP endpoint that defaults to production Alloy when unset,
+  and WeasyPrint's native libs.
+
+**`README.md` — documented a broken setup path to self-hosters.** Two separate
+blocks described `droneops-autopull.service`, `droneops-autopull.timer`,
+`autopull.sh` and `tail -f autopull.log`, and offered a `--branch` flag. All of
+those were removed with ADR-0018; `setup-server.sh` installs exactly **one** unit
+(`droneops.service`) and takes no `--branch`. Anyone following the README on a
+fresh install would have chased units that do not exist. Rewritten to the real
+boot-start behaviour plus an honest *Updating* section, including why there is
+deliberately no in-repo poller.
+
+**Also:** `ROADMAP.md` still called FP-1 PLANNED with "nothing built" while P0+P1
+were live (fixed in `c920ce8`), and the Tech Stack now names the Rust parser
+service and the `flight_details`/`flight_series` sidecars with the ADR-0019
+constraint that the flight-library list query must not touch them.
+
+No code changed; no version bump.
+
 ## 2026-09-05 — v2.90.0: canonical DJI serials in the fleet matcher (ADR-0044)
 
 88 production flights (49 Matrice 4TD + 39 Matrice 4T, all
