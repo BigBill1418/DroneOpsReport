@@ -43,6 +43,11 @@ Credentials: BOS-HQ ~/.droneops-secrets/restic-droneops.env  (mode 600, dir 700)
 > DroneOps from any machine with Docker and an internet connection. If you have
 > only the R2 credentials, you have 737 MiB of undecryptable ciphertext.
 
+> **And since 2026-09-11/12 there is a second copy on a second provider** — not run
+> by this repo, not a replacement for anything above. Everything in this runbook
+> lands in **one Cloudflare account**, and R2 has **no object versioning**, so a
+> delete or a corrupted overwrite there replaces the only copy. See **§13**.
+
 ---
 
 ## 1. Set up a restic shell (do this first, every procedure below assumes it)
@@ -453,7 +458,62 @@ that is filed incorrectly is invisible until exactly the moment it matters.
 ## 12. Related
 
 - [ADR-0041](../adr/0041-comprehensive-encrypted-backup-to-r2.md) — the decision, the seven gaps, options considered
+- §13 below / noc-master ADR-0232 — the fleet's second storage provider
 - `scripts/droneops-backup.sh` — the backup job
 - `scripts/restore-drill.sh` — the quarterly proof
 - `scripts/systemd/droneops-backup.{service,timer}`, `droneops-restore-drill.{service,timer}`
 - Fleet ADR-0036 (ntfy transport) / ADR-0037 (notification noise policy) / ADR-0086 (1Password Fleet vault)
+
+---
+
+## 13. The second provider: Backblaze B2 (noc-master ADR-0232) — the fleet runs this, not DroneOps
+
+**Pointer, not a duplicate.** Doctrine:
+`noc-master/docs/adr/0232-second-provider-immutable-nightly-backup.md`. Operations:
+`noc-master/docs/runbooks/fleet-b2-backup.md`. **Nothing in §§0–12 changed** — the four
+tagged lanes, the twice-daily timer, the `forget --prune` policy, the freshness metric,
+`obs-rule-droneops-backup-stale` and the quarterly drill are all untouched and remain the
+primary path.
+
+Since 2026-09-11/12, two fleet lanes give DroneOps state a copy on a **different storage
+provider**, nightly, into one Backblaze B2 bucket `barnardhq-fleet-nightly` — Object Lock
+**compliance mode, 90 days**, keep-all-versions, **zero lifecycle rules, no `forget`, no
+`prune`, ever**:
+
+| Lane | What it covers for DroneOps | How it comes back |
+|---|---|---|
+| `fleetbackup-bos` (BOS-HQ, 09:15 PT) | BOS-HQ's **whole root filesystem** — so `~/droneops/` (compose files, `.env`, scripts), **`~/.droneops-secrets/restic-droneops.env`**, the `droneops_app_data` volume (`/data/uploads` + `/data/reports`) and the docker volumes generally, under `/var/lib/docker/volumes` (verified not excluded — only container image/layer stores are) | `restic restore latest --target /var/tmp/… --include <path>` with the lane env on BOS, or from **any** machine using the 1Password values. Fleet runbook §2a |
+| `fleetbackup-r2-mirror` (BOS-HQ, 07:00 PT) | `rclone copy` — **never `sync`** — of **every** R2 bucket, list read live from the R2 API each run. So the **`droneops-backups` repository itself** is copied, and so is the legacy `obs-glitchtip-backups/droneops/` tree. A delete in R2 does not propagate | `rclone copy b2:barnardhq-fleet-nightly/fleetbackup-r2-mirror/droneops-backups/<key> …`, then use it as an ordinary restic repo with **the same restic password** (§0). Fleet runbook §2c |
+
+Two things this genuinely buys, stated precisely:
+
+- **The `forget --prune` in §9 no longer decides what exists forever.** Because the mirror
+  is copy-forward and B2 is never pruned, **snapshots this repo has already forgotten
+  remain in B2.** That is the feature, and it is also a cost line that only rises.
+- **The recovery key problem is unchanged and still the one that matters.** The B2 copy of
+  `droneops-backups` is the *same encrypted restic repository* — `DroneOps Command Backup
+  Restic Password` is still the single point of unrecoverable failure, and a second
+  provider does nothing about that. What the `fleetbackup-bos` lane *does* add is a copy of
+  `~/.droneops-secrets/restic-droneops.env` itself, behind a **different** password
+  (`Fleet B2 nightly — lane bos`) — a second, independent route to the same secret. Both
+  are in the 1Password Fleet vault; neither is on a host you might have lost.
+
+Three things it does **not** buy — do not let the table above be read as more than it is:
+
+- **It does not make `droneops_standby_pgdata` a valid backup.** §9 excludes the running
+  cluster's pgdata as a filesystem on purpose, and that judgement stands: the whole-root
+  lane *does* capture that volume, but only as a crash-consistent filesystem copy that
+  recovers via WAL replay. **The logical `pg_dump -Fc` in the `db` lane is still the
+  correct artifact** — restore from it, not from the volume, unless the dump is gone.
+- **It is not PITR and it does not change RPO.** §10 stands: RPO is 12 h from this repo's
+  own lanes; the B2 lane is once a night.
+- **It is file-level, not bare-metal.** `/boot` and container image layers are excluded, so
+  an image built on BOS and never pushed to a registry is not in there.
+
+Health: **one** digest a day at 11:00 PT on ntfy `infrawatch-alerts` (the DroneOps backup
+topics are untouched); weekly `restic check`; quarterly restore drills on the 16th of
+Jan/Apr/Jul/Oct. **Never** `restic forget`/`prune` a `fleetbackup-*` repository, `rclone
+sync` the mirror, or add a lifecycle rule to that bucket — the full list is fleet runbook
+§9. And note: nothing in that bucket is purgeable for 90 days, so since this repository
+holds **executed TOS documents and invoice records**, a deletion obligation that must reach
+every copy is a retention question for the operator rather than a `restic forget`.

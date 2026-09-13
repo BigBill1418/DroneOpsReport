@@ -645,3 +645,45 @@ recovery runbook are load-bearing and are now executed, not assumed.
 5. **Repeat the cold, 1Password-only rehearsal annually, and after any rotation
    of either Fleet item.** The quarterly drill cannot detect a mis-filed secret,
    because it never reads 1Password. Only this rehearsal shape can.
+
+---
+
+## Amendment 1 (2026-09-12) — one provider became two; D3's exclusions and D5's RPO stand
+
+Recorded from outside this repo. No DroneOps script, unit, credential, retention setting or
+schedule changed, and nothing above is retracted.
+
+This ADR closed seven gaps in a lane that lands in **one Cloudflare account**. R2 has **no
+object versioning**, so a delete or corrupted overwrite there replaces the only copy — a gap
+this ADR did not address because at the time the fleet had no second provider. noc-master
+**ADR-0232** (2026-09-11/12) adds one:
+
+- **`fleetbackup-r2-mirror`** `rclone copy`s (**never `sync`**) every R2 bucket, so
+  `droneops-backups` — the same encrypted restic repository — and the legacy
+  `obs-glitchtip-backups/droneops/` tree are both copied into Backblaze B2
+  `barnardhq-fleet-nightly`. Object Lock **compliance 90 days**, keep-all-versions, **zero
+  lifecycle rules, no `forget`, no `prune`**. Because it is copy-forward and never pruned,
+  **snapshots D4's `forget --prune` has already removed remain in B2.**
+- **`fleetbackup-bos`** takes BOS-HQ's whole root filesystem nightly, so `~/droneops/`,
+  `~/.droneops-secrets/restic-droneops.env` and the `droneops_app_data` volume have a copy
+  behind a *different* restic password — a second independent route to the credential D1
+  identifies as the single unrecoverable secret.
+
+**What this amendment explicitly does NOT change:**
+
+- **D3's exclusions are still correct.** The whole-root lane captures
+  `droneops_standby_pgdata` as a filesystem, but only crash-consistently (WAL replay on
+  recovery). D3's judgement that *"a physical copy of a running cluster is not a valid
+  backup"* stands; the logical `pg_dump -Fc` remains the correct restore artifact.
+- **D5's RPO conclusion is unchanged.** The B2 lanes are nightly. RPO stays 12 h from this
+  repo's own timer, there is still no PITR, and `pg_receivewal` → a fifth restic lane remains
+  the correct path if RPO ever needs to be minutes.
+- **D1's recovery-key exposure is unchanged.** The B2 copy of `droneops-backups` is the same
+  ciphertext; losing `DroneOps Command Backup Restic Password` still makes it unreadable.
+
+Retention consequence worth naming, since this repository deliberately holds executed TOS
+documents and invoice records: nothing in the B2 bucket is purgeable for **90 days**, and it
+is never pruned at all — so a deletion obligation that must reach every copy is an operator
+retention decision, not a `restic forget` (which the bucket refuses anyway). Restore
+procedure: `docs/runbooks/droneops-backup-restore.md` §13 →
+`noc-master/docs/runbooks/fleet-b2-backup.md`.

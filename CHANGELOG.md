@@ -4,6 +4,42 @@
 
 Notable changes to DroneOpsCommand. Dates are absolute (YYYY-MM-DD, UTC).
 
+## 2026-09-12 — the backup lane had one provider; it now has two (noc-master ADR-0232) [skip-deploy]
+
+Docs only. No script, unit, credential, retention setting or schedule in this repo changed, and
+no version bump (nothing under application code was touched).
+
+ADR-0041 closed seven gaps in a lane that lands in **one Cloudflare account**, where R2 has **no
+object versioning** — so a delete or corrupted overwrite there replaces the only copy. noc-master
+**ADR-0232** (2026-09-11/12) adds a second provider, and DroneOps configures none of it:
+
+- **`fleetbackup-r2-mirror`** (BOS, 07:00 PT) — `rclone copy`, **never `sync`**, of every R2
+  bucket, so `droneops-backups` (the same encrypted restic repository) and the legacy
+  `obs-glitchtip-backups/droneops/` tree are copied into B2 `barnardhq-fleet-nightly`. Object
+  Lock **compliance 90 d**, keep-all-versions, never pruned — so **snapshots this repo's
+  `forget --prune` has already removed remain in B2.**
+- **`fleetbackup-bos`** (09:15 PT) — BOS-HQ's whole root filesystem, so `~/droneops/`,
+  **`~/.droneops-secrets/restic-droneops.env`** and the `droneops_app_data` volume have a copy
+  behind a *different* restic password: a second independent route to the credential ADR-0041
+  D1 names as the single unrecoverable secret.
+
+New runbook **§13** and **ADR-0041 Amendment 1**. Both spend as much space on what this does
+**not** change as on what it does, because the easy misreading is expensive:
+
+- It does **not** make `droneops_standby_pgdata` a valid backup. The whole-root lane captures
+  that volume, but only crash-consistently (WAL replay). **D3 stands** — the logical
+  `pg_dump -Fc` is still the correct restore artifact.
+- It does **not** change RPO. **D5 stands**: 12 h from this repo's own timer, no PITR, and
+  `pg_receivewal` → a fifth lane is still the path if RPO must be minutes. The B2 lane is
+  nightly.
+- It does **not** help with the recovery key. The mirrored repo is the same ciphertext.
+- It is file-level, not bare-metal (`/boot` and container image layers excluded).
+
+Retention note, recorded because this repository holds executed TOS documents and invoice
+records: nothing in that bucket is purgeable for 90 days and it is never pruned, so a deletion
+obligation that must reach every copy is an operator retention decision rather than a
+`restic forget`.
+
 ## 2026-09-11 — P-EVAL: the `dji-log-parser` bump does not exist
 
 FP-1's **P-EVAL** gate (ADR-0043 decision **D6**) is complete. Report:
